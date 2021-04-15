@@ -25,10 +25,10 @@ class MLPPolicy(BasePolicy):
         self.ac_dim = ac_dim
         self.ob_dim = ob_dim
         self.n_layers = n_layers
-        self.discrete = discrete
         self.size = size
         self.learning_rate = learning_rate
         self.training = training
+        self.discrete = discrete
         self.nn_baseline = nn_baseline
 
         # build TF graph
@@ -47,8 +47,6 @@ class MLPPolicy(BasePolicy):
         self.build_action_sampling()
         if self.training:
             with tf.variable_scope('train', reuse=tf.AUTO_REUSE):
-                if self.nn_baseline:
-                    self.build_baseline_forward_pass()
                 self.define_train_op()
 
     ##################################
@@ -57,21 +55,14 @@ class MLPPolicy(BasePolicy):
         raise NotImplementedError
 
     def define_forward_pass(self):
-        if self.discrete:
-            logits_na = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='discrete_logits', n_layers=self.n_layers, size=self.size)
-            self.parameters = logits_na
-        else:
-            mean = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='continuous_logits', n_layers=self.n_layers, size=self.size)
-            logstd = tf.Variable(tf.zeros(self.ac_dim), name='logstd')
-            self.parameters = (mean, logstd)
+        # implement this build_mlp function in tf_utils
+        mean = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='continuous_logits', n_layers=self.n_layers, size=self.size)
+        logstd = tf.Variable(tf.zeros(self.ac_dim), name='logstd')
+        self.parameters = (mean, logstd)
 
     def build_action_sampling(self):
-        if self.discrete:
-            logits_na = self.parameters
-            self.sample_ac = tf.squeeze(tf.multinomial(logits_na, num_samples=1), axis=1)
-        else:
-            mean, logstd = self.parameters
-            self.sample_ac = mean + tf.exp(logstd) * tf.random_normal(tf.shape(mean), 0, 1)
+        mean, logstd = self.parameters
+        self.sample_ac = mean + tf.exp(logstd) * tf.random_normal(tf.shape(mean), 0, 1)
 
     def define_train_op(self):
         raise NotImplementedError
@@ -100,22 +91,29 @@ class MLPPolicy(BasePolicy):
 
     ##################################
 
+    # query this policy with observation(s) to get selected action(s)
+    def get_action(self, obs):
+        if len(obs.shape)>1:
+            observation = obs
+        else:
+            observation = obs[None]
+
+        # return the action that the policy prescribes
+        # HINT1: you will need to call self.sess.run
+        # HINT2: the tensor we're interested in evaluating is self.sample_ac
+        # HINT3: in order to run self.sample_ac, it will need observation fed into the feed_dict
+        return self.sess.run(self.sample_ac, feed_dict={self.observations_pl: observation})
+
     # update/train this policy
     def update(self, observations, actions):
         raise NotImplementedError
-
-    # query the neural net that's our 'policy' function, as defined by an mlp above
-    # query the policy with observation(s) to get selected action(s)
-    def get_action(self, obs):
-
-        # TODO: GETTHIS from HW1
 
 #####################################################
 #####################################################
 
 # class MLPPolicySL(MLPPolicy):
 
-    # TODO: GETTHIS from HW1 (or comment it out, since you don't need it for this homework)
+# TODO: GETTHIS from HW1 (or comment it out, since you don't need it for this homework)
 
 #####################################################
 #####################################################
@@ -145,7 +143,7 @@ class MLPPolicyPG(MLPPolicy):
     def define_train_op(self):
 
         # define the log probability of seen actions/observations under the current policy
-        self.define_log_prob()
+        self.define_log_prob() # this defines self.logprob_n
 
         # TODO: define the loss that should be optimized when training a policy with policy gradient
         # HINT1: Recall that the expression that we want to MAXIMIZE
@@ -157,20 +155,20 @@ class MLPPolicyPG(MLPPolicy):
             # to get [Q_t - b_t]
         # HINT4: don't forget that we need to MINIMIZE this self.loss
             # but the equation above is something that should be maximized
-        self.loss = tf.reduce_sum(TODO)
+        self.loss = tf.reduce_sum(-self.logprob_n * self.adv_n)
 
         # TODO: define what exactly the optimizer should minimize when updating the policy
-        self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(TODO)
+        self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
 
         if self.nn_baseline:
             # TODO: define the loss that should be optimized for training the baseline
             # HINT1: use tf.losses.mean_squared_error, similar to SL loss from hw1
             # HINT2: we want predictions (self.baseline_prediction) to be as close as possible to the labels (self.targets_n)
                 # see 'update' function below if you don't understand what's inside self.targets_n
-            self.baseline_loss = TODO
+            self.baseline_loss = tf.losses.mean_squared_error(self.targets_n, self.baseline_prediction)
 
             # TODO: define what exactly the optimizer should minimize when updating the baseline
-            self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(TODO)
+            self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.baseline_loss)
 
     #########################
 
@@ -180,7 +178,7 @@ class MLPPolicyPG(MLPPolicy):
         # HINT1: query it with observation(s) to get the baseline value(s)
         # HINT2: see build_baseline_forward_pass (above) to see the tensor that we're interested in
         # HINT3: this will be very similar to how you implemented get_action (above)
-        return TODO
+        return self.sess.run([self.run_baseline_prediction], feed_dict={self.observations_pl: obs})[0]
 
     def update(self, observations, acs_na, adv_n=None, acs_labels_na=None, qvals=None):
         assert(self.training, 'Policy must be created with training=True in order to perform training updates...')
@@ -191,7 +189,7 @@ class MLPPolicyPG(MLPPolicy):
             targets_n = (qvals - np.mean(qvals))/(np.std(qvals)+1e-8)
             # TODO: update the nn baseline with the targets_n
             # HINT1: run an op that you built in define_train_op
-            TODO
+            self.sess.run([self.baseline_update_op], feed_dict={self.targets_n: targets_n, self.observations_pl: observations})
         return loss
 
 #####################################################
