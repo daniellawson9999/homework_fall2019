@@ -56,13 +56,21 @@ class MLPPolicy(BasePolicy):
 
     def define_forward_pass(self):
         # implement this build_mlp function in tf_utils
-        mean = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='continuous_logits', n_layers=self.n_layers, size=self.size)
-        logstd = tf.Variable(tf.zeros(self.ac_dim), name='logstd')
-        self.parameters = (mean, logstd)
+        if self.discrete:
+            logits_na = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='discrete_logits', n_layers=self.n_layers, size=self.size)
+            self.parameters = logits_na
+        else:
+            mean = build_mlp(self.observations_pl, output_size=self.ac_dim, scope='continuous_logits', n_layers=self.n_layers, size=self.size)
+            logstd = tf.Variable(tf.zeros(self.ac_dim), name='logstd')
+            self.parameters = (mean, logstd)
 
     def build_action_sampling(self):
-        mean, logstd = self.parameters
-        self.sample_ac = mean + tf.exp(logstd) * tf.random_normal(tf.shape(mean), 0, 1)
+        if self.discrete:
+            logits_na = self.parameters
+            self.sample_ac = tf.squeeze(tf.multinomial(logits_na, num_samples=1), axis=1)
+        else:
+            mean, logstd = self.parameters
+            self.sample_ac = mean + tf.exp(logstd) * tf.random_normal(tf.shape(mean), 0, 1)
 
     def define_train_op(self):
         raise NotImplementedError
@@ -71,6 +79,7 @@ class MLPPolicy(BasePolicy):
         if self.discrete:
             #log probability under a categorical distribution
             logits_na = self.parameters
+            print(logits_na, "next", self.actions_pl)
             self.logprob_n = tf.distributions.Categorical(logits=logits_na).log_prob(self.actions_pl)
         else:
             #log probability under a multivariate gaussian
@@ -102,7 +111,7 @@ class MLPPolicy(BasePolicy):
         # HINT1: you will need to call self.sess.run
         # HINT2: the tensor we're interested in evaluating is self.sample_ac
         # HINT3: in order to run self.sample_ac, it will need observation fed into the feed_dict
-        return self.sess.run(self.sample_ac, feed_dict={self.observations_pl: observation})
+        return self.sess.run([self.sample_ac], feed_dict={self.observations_pl: observation})[0]
 
     # update/train this policy
     def update(self, observations, actions):
