@@ -47,6 +47,8 @@ class MLPPolicy(BasePolicy):
         self.build_action_sampling()
         if self.training:
             with tf.variable_scope('train', reuse=tf.AUTO_REUSE):
+                if self.nn_baseline:
+                    self.build_baseline_forward_pass()
                 self.define_train_op()
 
     ##################################
@@ -187,7 +189,7 @@ class MLPPolicyPG(MLPPolicy):
         # HINT1: query it with observation(s) to get the baseline value(s)
         # HINT2: see build_baseline_forward_pass (above) to see the tensor that we're interested in
         # HINT3: this will be very similar to how you implemented get_action (above)
-        return self.sess.run([self.run_baseline_prediction], feed_dict={self.observations_pl: obs})[0]
+        return self.sess.run([self.baseline_prediction], feed_dict={self.observations_pl: obs})[0]
 
     def update(self, observations, acs_na, adv_n=None, acs_labels_na=None, qvals=None):
         assert(self.training, 'Policy must be created with training=True in order to perform training updates...')
